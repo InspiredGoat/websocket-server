@@ -7,9 +7,9 @@
 typedef unsigned char byte;
 
 typedef enum {
-	CONTINUATION,
-	TEXT,
-	BINARY
+	OPCODE_CONTINUATION,
+	OPCODE_TEXT,
+	OPCODE_BINARY
 } Opcode;
 
 

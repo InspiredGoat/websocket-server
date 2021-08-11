@@ -92,76 +92,71 @@ int ws_read(int socket_fd, Dataframe* data) {
 	}
 
 	byte header[2];
-	recv(socket_fd, &header, 2, 0);
+	byte* payload = NULL;
+	uint64_t payload_length = 0;
+	byte opcode;
 
-	if(header[1] >> 7) {
-		byte opcode = header[0] & 15;
-		uint64_t payload_length = header[1] & 127;
+	do {
+		header[0] = 0;
+		header[1] = 0;
+		recv(socket_fd, &header, 2, 0);
+		uint64_t length = header[1] & 127;
 
 		// find length of payload
-		if(payload_length == 126) {
-			payload_length = 0;
-
-			recv(socket_fd, &payload_length, 16, 0);
-			payload_length = payload_length << 16;
-			printf("payload: %lu\n", payload_length);
+		if(length == 126) {
+			byte temp[2];
+			recv(socket_fd, &temp, sizeof(byte) * 2, 0);
+			
+			length = 0;
+			length = temp[0];
+			length <<= 8;
+			length |= temp[1];
 		}
-		else if(payload_length == 127) {
-			payload_length = 0;
+		else if(length == 127) {
+			byte temp[8];
+			recv(socket_fd, &temp, sizeof(byte) * 8, 0);
 
-			recv(socket_fd, &payload_length, 64, 0);
+			length = 0;
+			length = temp[0];
+			printf("temp[0]: %i\n", temp[0]);
+			for(int i = 1; i < 8; i++) {
+				printf("temp[%i]: %i\n", i, temp[i]);
+				length <<= 8;
+				length |= temp[i];
+			}
 		}
 
 		// extract mask key
 		byte mask_key[4];
-		recv(socket_fd, &mask_key, sizeof(byte) * 4, 0);
+		recv(socket_fd, &mask_key, 4, 0);
 
 		// extract payload
-		byte* payload = (byte*) malloc(sizeof(byte) * payload_length);
-		recv(socket_fd, payload, sizeof(byte) * payload_length, 0);
-
-		// decifer payload
-		for(int i = 0; i < payload_length; i++) {
-			payload[i] = payload[i] ^ mask_key[i % 4];
+		if(payload == NULL) {
+			payload = (byte*) malloc(sizeof(byte) * length);
+			opcode = header[0] & 15;
+		}
+		else {
+			printf("Fragmented message\n");
+			payload = (byte*) realloc(payload, sizeof(byte) * (payload_length + length));
 		}
 
-		// if FIN bit is enabled this a fragmented message
-		while(!header[0] >> 7) {
-			recv(socket_fd, &header, 2, 0);
+		recv(socket_fd, payload + payload_length, length, 0);
 			
-			uint64_t length = header[1] & 127;
+		printf("local payload: %lu\n", length);
+		printf("total payload: %lu\n", payload_length + length);
 
-			if(length == 126) {
-				length = 0;
-
-				recv(socket_fd, &length, 16, 0);
-				length = length >> 48;
-			}
-			else if(length == 127) {
-				length = 0;
-
-				recv(socket_fd, &length, 64, 0);
-			}
-
-			recv(socket_fd, &mask_key, sizeof(byte) * 4, 0);
-
-			payload = (byte*) realloc(payload, sizeof(byte) * (payload_length * length));
-			recv(socket_fd, payload + payload_length, length, 0);
-
-			for(int i = 0; i < length; i++) {
-				payload[payload_length + i] = payload[payload_length + i] ^ mask_key[i % 4];
-			}
-
-			payload_length += length;
+		for(uint64_t i = 0; i < length; i++) {
+			payload[payload_length + i] = payload[payload_length + i] ^ mask_key[i % 4];
 		}
 
-		data->opcode = opcode;
-		data->payload_length = payload_length;
-		data->payload = payload;
-		return 1;
+		payload_length += length;
 	}
-	else
-		return -1;
+	// if FIN bit was set, then the message is fragmented (composed of multiple frames)
+	while(!((header[0] >> 7) & 1) || (header[0] & 15) == CONTINUATION);
+
+	data->payload_length = payload_length;
+	data->payload = payload;
+	return 1;
 }
 
 

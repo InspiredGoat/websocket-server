@@ -70,6 +70,8 @@ int main() {
 	ws_read(client_fd, &dataframe);
 	printf("Received dataframe from client!\n");
 	
+	char dummy = 'a';
+	scanf("%c", &dummy);
 	for(uint64_t i = 0; i < dataframe.payload_length; i++)
 		putchar(dataframe.payload[i]);
 	printf("\n");
