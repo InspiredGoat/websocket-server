@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include <string.h>
+#include <sys/time.h>
 
 #include <netdb.h>
 #include <unistd.h>
@@ -12,6 +13,7 @@
 
 #define PORT 8000
 #define MAX_CLIENTS 10
+
 
 int main() {
 	int server_fd;
@@ -28,6 +30,7 @@ int main() {
 
 	// make port reusable
 	setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+	setsockopt(server_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
 	setsockopt(server_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
 
 	// make sure sockets are connected
@@ -47,41 +50,46 @@ int main() {
 	
 	printf("Started server, listening at port: %i\n", PORT);
 
+	FILE* log_file;
+
 	// accept loop
-	int client_fd;
-	struct sockaddr_in client_address;
-	socklen_t client_address_length = sizeof(struct sockaddr_in);
+	for(;;) {
+		int client_fd;
+		struct sockaddr_in client_address;
+		socklen_t client_address_length = sizeof(client_address);
 
-	client_fd = accept(server_fd, (struct sockaddr*) &client_address, &client_address_length);
+		client_fd = accept(server_fd, (struct sockaddr*) &client_address, &client_address_length);
+		printf("Client found!\n");
 
-	printf("Client found!\n");
+		struct timeval start, stop;
+		gettimeofday(&start, NULL);
+		int res = ws_handshake(client_fd);
 
-	int res = ws_handshake(client_fd);
-	if(!res) {
-		printf("Could not connect to client\n");
-		close(server_fd);
+		if(!res) {
+			printf("Handshake failed\n");
+			close(server_fd);
+			close(client_fd);
+			exit(EXIT_FAILURE);
+		}
+
+		Dataframe dataframe;
+		ws_read(client_fd, &dataframe);
+		log_file = fopen("logs.txt", "a");
+
+		printf("message: %s\n", dataframe.payload);
+		printf("payload length: %lu\n", dataframe.payload_length);
+
+		gettimeofday(&stop, NULL);
+		float time_taken = ((stop.tv_sec - start.tv_sec) + (stop.tv_usec - start.tv_usec) / 1000000.f);
+		printf("took: %f seconds\n", time_taken);
+
 		close(client_fd);
-		exit(EXIT_FAILURE);
+		fprintf(log_file, "%f\n", time_taken);
+
+		Dataframe_free(&dataframe);
+		fclose(log_file);
 	}
 
-	byte message[] = "hello";
-
-	Dataframe dataframe;
-	ws_read(client_fd, &dataframe);
-	printf("Received dataframe from client!\n");
-	
-	char dummy = 'a';
-	scanf("%c", &dummy);
-	for(uint64_t i = 0; i < dataframe.payload_length; i++)
-		putchar(dataframe.payload[i]);
-	printf("\n");
-
-	printf("payload length: %lu\n", dataframe.payload_length);
-	Dataframe_free(&dataframe);
-
-	printf("handshake's OVER\n YOU'RE DEAD\n");
-
-	close(client_fd);
 	close(server_fd);
 
 	return 0;
